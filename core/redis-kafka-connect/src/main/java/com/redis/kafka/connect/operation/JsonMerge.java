@@ -63,10 +63,11 @@ public class JsonMerge<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
                     return deleteKey(commands, key);
                 }
             }
-System.out.println("isPathSet() "+isPathSet());
+
+            System.out.println("isPathSet "+isPathSet() + " path: "+path);
+
             // Perform JSON operation based on whether path is set
             if (isPathSet()) {
-
                 return performJsonMerge(commands, key, path, value);
             } else {
                 return performJsonSet(commands, key, value);
@@ -105,7 +106,7 @@ System.out.println("isPathSet() "+isPathSet());
         // Convert empty JSON object
         String emptyJson = mapper.writeValueAsString(new Object());
         byte[] emptyJsonBytes = emptyJson.getBytes(StandardCharsets.UTF_8);
-
+        System.out.println("key: "+key + " path: "+ path + " value: "+ value);
         // Merge empty JSON object first
         ((RedisJSONAsyncCommands<K, V>) commands).jsonMerge(key, ROOT_PATH, (V) emptyJsonBytes);
         // Merge actual value

@@ -175,7 +175,7 @@ public class RedisSinkTask extends SinkTask {
                 return jsonSet;
             case JSONMERGE:
                 JsonMerge<byte[], byte[], SinkRecord> jsonMerge = new JsonMerge<>();
-                jsonMerge.setKeyFunction(this::key);
+                jsonMerge.setKeyFunction(this::jsonPathKey);
                 jsonMerge.setValueFunction(this::jsonValue);
                 jsonMerge.setConditionFunction(this::isNullValue);
                 jsonMerge.setPathFunction(this::determineJsonPath);
@@ -325,10 +325,35 @@ public class RedisSinkTask extends SinkTask {
         throw new ConnectException("Unsupported source value type: " + sinkRecord.valueSchema().type().name());
     }
 
+    private byte[] jsonPathKey(SinkRecord record) {
+        String key;
+
+        // Check if the record key is available
+        if (record.key() != null) {
+            key = String.valueOf(record.key());
+        } else {
+            // Attempt to find the key in the headers if the record key is missing
+            Headers headers = record.headers();
+            String headerKeyName = "key"; // Replace with the key name defined in the config
+            key = getValueFromHeader(headers, headerKeyName);
+        }
+
+        if (key == null) {
+            // Handle the case where no key is found (record key is null and no header key is found)
+            // You can return an empty byte array or handle it as needed
+            return new byte[0];
+        }
+
+        // Build the key with keyspace if available
+        String resultKey = config.getKeyspace().isEmpty() ? key : keyspace(record) + config.getSeparator() + key;
+
+        return resultKey.getBytes(config.getCharset());
+    }
+
     private String determineJsonPath(SinkRecord record) {
         try {
             Headers headers = record.headers();
-            String jsonPath = getJsonPathFromHeader(headers, config.getJsonPath());
+            String jsonPath = getValueFromHeader(headers, config.getJsonPath());
 
             if (jsonPath == null) {
                 return config.getFixedJsonPath();
@@ -341,11 +366,11 @@ public class RedisSinkTask extends SinkTask {
         }
     }
 
-    private String getJsonPathFromHeader(Headers headers, String path) {
+    private String getValueFromHeader(Headers headers, String key) {
         for (Header header : headers) {
-            System.out.println("path "+path);
-            System.out.println("header "+header);
-            if (header.key().equals(path)) {
+            System.out.println("key " + key);
+            System.out.println("header " + header);
+            if (header.key().equals(key)) {
                 return header.value().toString();
             }
         }
