@@ -68,7 +68,8 @@ import com.redis.kafka.connect.operation.Sadd;
 import com.redis.spring.batch.writer.operation.Set;
 import com.redis.spring.batch.writer.operation.TsAdd;
 import com.redis.spring.batch.writer.operation.Xadd;
-import com.redis.spring.batch.writer.operation.Zadd;
+//import com.redis.spring.batch.writer.operation.Zadd;
+import com.redis.kafka.connect.operation.Zadd;
 
 import io.lettuce.core.AbstractRedisClient;
 import io.lettuce.core.KeyValue;
@@ -215,6 +216,7 @@ public class RedisSinkTask extends SinkTask {
                 Zadd<byte[], byte[], SinkRecord> zadd = new Zadd<>();
                 zadd.setKeyFunction(this::collectionKey);
                 zadd.setValueFunction(new ToScoredValueFunction<>(this::member, this::doubleValue));
+                zadd.setConditionFunction(this::isNullValue);
                 return zadd;
             case DEL:
                 Del<byte[], byte[], SinkRecord> del = new Del<>();
