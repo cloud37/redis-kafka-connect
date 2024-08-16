@@ -216,6 +216,7 @@ public class RedisSinkTask extends SinkTask {
                 Zadd<byte[], byte[], SinkRecord> zadd = new Zadd<>();
                 zadd.setKeyFunction(this::collectionKey);
                 zadd.setValueFunction(new ToScoredValueFunction<>(this::member, this::doubleValue));
+                zadd.setMemberFunction(this::member);
                 zadd.setConditionFunction(this::isNullValue);
                 return zadd;
             case DEL:
