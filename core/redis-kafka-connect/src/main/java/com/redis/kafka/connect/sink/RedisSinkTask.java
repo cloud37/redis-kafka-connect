@@ -180,6 +180,7 @@ public class RedisSinkTask extends SinkTask {
                 jsonMerge.setValueFunction(this::jsonValue);
                 jsonMerge.setConditionFunction(this::isNullValue);
                 jsonMerge.setPathFunction(this::determineJsonPath);
+                jsonMerge.setDeleteJsonPath(config.getDeleteJsonPath());
                 return jsonMerge;
             case SET:
                 Set<byte[], byte[], SinkRecord> set = new Set<>();

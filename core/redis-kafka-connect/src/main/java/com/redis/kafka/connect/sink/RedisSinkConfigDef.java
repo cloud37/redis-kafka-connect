@@ -71,6 +71,12 @@ public class RedisSinkConfigDef extends RedisConfigDef {
 
     public static final String FIXED_JSON_PATH_DOC = "The fixed JSON path to set within the value in the header of the Kafka message. This path will be used if the dynamic path is not present.";
 
+    public static final String DELETE_JSON_PATH_CONFIG = "redis.json.delete.path";
+
+    public static final String DELETE_JSON_PATH_DEFAULT = "false";
+
+    public static final String DELETE_JSON_PATH_DOC = "Whether to delete a specified JSON path before merging data using JSONMERGE.";
+
     public static final String COMMAND_DOC = "Destination data structure: "
             + String.join(",", Stream.of(RedisCommand.values()).map(RedisCommand::name).toArray(String[]::new));
 
@@ -97,6 +103,7 @@ public class RedisSinkConfigDef extends RedisConfigDef {
         define(WAIT_TIMEOUT_CONFIG, Type.LONG, WAIT_TIMEOUT_DEFAULT, Importance.MEDIUM, WAIT_TIMEOUT_DOC);
         define(JSON_PATH_CONFIG, Type.STRING, JSON_PATH_DEFAULT, Importance.MEDIUM, JSON_PATH_DOC);
         define(FIXED_JSON_PATH_CONFIG, Type.STRING, FIXED_JSON_PATH_DEFAULT, Importance.MEDIUM, FIXED_JSON_PATH_DOC);
+        define(DELETE_JSON_PATH_CONFIG, Type.BOOLEAN, DELETE_JSON_PATH_DEFAULT, Importance.MEDIUM, DELETE_JSON_PATH_DOC);
     }
 
     @Override
@@ -114,6 +121,9 @@ public class RedisSinkConfigDef extends RedisConfigDef {
             }
             if (props.containsKey(FIXED_JSON_PATH_CONFIG)) {
                 results.get(FIXED_JSON_PATH_CONFIG).addErrorMessage("The fixed JSON path configuration is not allowed unless the command is JSONMERGE.");
+            }
+            if (props.containsKey(DELETE_JSON_PATH_CONFIG)) {
+                results.get(DELETE_JSON_PATH_CONFIG).addErrorMessage("The delete JSON path configuration is not allowed unless the command is JSONMERGE."); // Neue Validierung
             }
         }
 

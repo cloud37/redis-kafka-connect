@@ -12,10 +12,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 
 public class JsonMerge<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
-    private static final Logger log = LoggerFactory.getLogger(JsonSet.class);
+    private static final Logger log = LoggerFactory.getLogger(JsonMerge.class);
 
     public static final String ROOT_PATH = "$";
     private static final Function<Object, String> DEFAULT_PATH_FUNCTION = t -> ROOT_PATH;
@@ -26,11 +27,17 @@ public class JsonMerge<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
 
     private final ObjectMapper mapper;
 
+    private boolean deleteJsonPath = false;
+
     public JsonMerge() {
         // Set default path function
         this.pathFunction = (Function<T, String>) DEFAULT_PATH_FUNCTION;
         this.mapper = new ObjectMapper();
         this.mapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
+    }
+
+    public void setDeleteJsonPath(boolean deleteJsonPath) {
+        this.deleteJsonPath = deleteJsonPath;
     }
 
     public void setPath(String path) {
@@ -64,7 +71,7 @@ public class JsonMerge<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
                 }
             }
 
-            System.out.println("isPathSet "+isPathSet() + " path: "+path);
+            log.debug("isPathSet: {} - path: {}", isPathSet(), path);
 
             // Perform JSON operation based on whether path is set
             if (isPathSet()) {
@@ -72,11 +79,8 @@ public class JsonMerge<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
             } else {
                 return performJsonSet(commands, key, value);
             }
-        } catch (JsonProcessingException e) {
-            log.error("Error processing JSON", e);
-            return null;
         } catch (Exception e) {
-            log.error("Error executing Redis command", e);
+            log.error("Error during Redis operation", e);
             return null;
         }
     }
@@ -102,18 +106,25 @@ public class JsonMerge<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
     }
 
     @SuppressWarnings("unchecked")
-    private RedisFuture<String> performJsonMerge(BaseRedisAsyncCommands<K, V> commands, K key, String path, V value) throws JsonProcessingException {
-        // Convert empty JSON object
+    private RedisFuture<String> performJsonMerge(BaseRedisAsyncCommands<K, V> commands, K key, String path, V value) throws ExecutionException, InterruptedException, JsonProcessingException {
+        if (this.deleteJsonPath) {
+            log.info("Deleting JSON path before merge. Key: {}, Path: {}", key, path);
+            RedisFuture<String> deleteFuture = deleteJsonPath(commands, key, path);
+            deleteFuture.get(); // Wait until the deletion process is complete
+        }
+
+        // Convert an empty JSON object
         String emptyJson = mapper.writeValueAsString(new Object());
         byte[] emptyJsonBytes = emptyJson.getBytes(StandardCharsets.UTF_8);
         System.out.println("key: "+key + " path: "+ path + " value: "+ value);
-        // Merge empty JSON object first
+        // Merge an empty JSON object first
         ((RedisJSONAsyncCommands<K, V>) commands).jsonMerge(key, ROOT_PATH, (V) emptyJsonBytes);
-        // Merge actual value
+
+        // Merge the actual value
         return ((RedisJSONAsyncCommands<K, V>) commands).jsonMerge(key, path, value);
     }
 
-    private RedisFuture<String> performJsonSet(BaseRedisAsyncCommands<K, V> commands, K key, V value) throws JsonProcessingException {
+    private RedisFuture<String> performJsonSet(BaseRedisAsyncCommands<K, V> commands, K key, V value) {
         return ((RedisJSONAsyncCommands<K, V>) commands).jsonSet(key, ROOT_PATH, value);
     }
 

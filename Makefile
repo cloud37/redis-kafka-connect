@@ -8,6 +8,7 @@ build:
 # Copy task
 copy: build
 	cp core/redis-kafka-connect/build/confluent/redis-redis-kafka-connect-0.11.0-beta.zip ../bdl-datapool-filter/kafka/kafka-connect/
+	cp core/redis-kafka-connect/build/confluent/redis-redis-kafka-connect-0.11.0-beta.zip ../opus.bdl.datapool.infra/kafka/kafka-connect/
 
 # Clean task (optional), if you want to clean build artifacts
 clean:
