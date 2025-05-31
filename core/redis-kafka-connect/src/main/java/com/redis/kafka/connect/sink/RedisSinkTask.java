@@ -170,9 +170,10 @@ public class RedisSinkTask extends SinkTask {
                 return hset;
             case JSONSET:
                 JsonSet<byte[], byte[], SinkRecord> jsonSet = new JsonSet<>();
-                jsonSet.setKeyFunction(this::key);
+                jsonSet.setKeyFunction(this::jsonPathKey);
                 jsonSet.setValueFunction(this::jsonValue);
                 jsonSet.setConditionFunction(this::isNullValue);
+                jsonSet.setPathFunction(this::determineJsonPath);
                 return jsonSet;
             case JSONMERGE:
                 JsonMerge<byte[], byte[], SinkRecord> jsonMerge = new JsonMerge<>();
@@ -180,7 +181,7 @@ public class RedisSinkTask extends SinkTask {
                 jsonMerge.setValueFunction(this::jsonValue);
                 jsonMerge.setConditionFunction(this::isNullValue);
                 jsonMerge.setPathFunction(this::determineJsonPath);
-                jsonMerge.setDeleteJsonPath(config.getDeleteJsonPath());
+                jsonMerge.setSubPathFunction(this::determineDeleteJsonPath);
                 return jsonMerge;
             case SET:
                 Set<byte[], byte[], SinkRecord> set = new Set<>();
@@ -338,12 +339,12 @@ public class RedisSinkTask extends SinkTask {
         } else {
             // Attempt to find the key in the headers if the record key is missing
             Headers headers = record.headers();
-            String headerKeyName = "key"; // Replace with the key name defined in the config
+            String headerKeyName = "key"; // Replace it with the key name defined in the config
             key = getValueFromHeader(headers, headerKeyName);
         }
 
         if (key == null) {
-            // Handle the case where no key is found (record key is null and no header key is found)
+            // Handle the case where no key is found (record key is null, and no header key is found)
             // You can return an empty byte array or handle it as needed
             return new byte[0];
         }
@@ -366,6 +367,27 @@ public class RedisSinkTask extends SinkTask {
             return jsonPath;
         } catch (Exception e) {
             log.error("Error determining JSON path: ", e);
+            return config.getFixedJsonPath();
+        }
+    }
+
+    private String determineDeleteJsonPath(SinkRecord record) {
+        try {
+            String mainPath = determineJsonPath(record);
+            String subPath = config.getJsonSubPath();
+            if (subPath != null && !subPath.trim().isEmpty()) {
+                if (!subPath.trim().startsWith(".")) {
+                    subPath = "." + subPath.trim();
+                }
+                String fullPath = mainPath + subPath;
+                log.debug("Delete JSON path: {} (main: {}, sub: {})", fullPath, mainPath, subPath);
+                return fullPath;
+            } else {
+                log.debug("No subpath configured for delete, using main path: {}", mainPath);
+                return mainPath;
+            }
+        } catch (Exception e) {
+            log.error("Error determining delete JSON path: ", e);
             return config.getFixedJsonPath();
         }
     }

@@ -71,14 +71,12 @@ public class RedisSinkConfigDef extends RedisConfigDef {
 
     public static final String FIXED_JSON_PATH_DOC = "The fixed JSON path to set within the value in the header of the Kafka message. This path will be used if the dynamic path is not present.";
 
-    public static final String DELETE_JSON_PATH_CONFIG = "redis.json.delete.path";
-
-    public static final String DELETE_JSON_PATH_DEFAULT = "false";
-
-    public static final String DELETE_JSON_PATH_DOC = "Whether to delete a specified JSON path before merging data using JSONMERGE.";
-
     public static final String COMMAND_DOC = "Destination data structure: "
             + String.join(",", Stream.of(RedisCommand.values()).map(RedisCommand::name).toArray(String[]::new));
+
+    public static final String JSON_SUBPATH_CONFIG = "redis.json.subpath";
+    public static final String JSON_SUBPATH_DEFAULT = "";
+    public static final String JSON_SUBPATH_DOC = "Optional subpath for JSON commands. If defined, this subpath will be applied on top of the main JSON path.";
 
     protected static final Set<RedisCommand> MULTI_EXEC_COMMANDS = Stream
             .of(RedisCommand.XADD, RedisCommand.LPUSH, RedisCommand.RPUSH, RedisCommand.SADD, RedisCommand.ZADD)
@@ -103,7 +101,7 @@ public class RedisSinkConfigDef extends RedisConfigDef {
         define(WAIT_TIMEOUT_CONFIG, Type.LONG, WAIT_TIMEOUT_DEFAULT, Importance.MEDIUM, WAIT_TIMEOUT_DOC);
         define(JSON_PATH_CONFIG, Type.STRING, JSON_PATH_DEFAULT, Importance.MEDIUM, JSON_PATH_DOC);
         define(FIXED_JSON_PATH_CONFIG, Type.STRING, FIXED_JSON_PATH_DEFAULT, Importance.MEDIUM, FIXED_JSON_PATH_DOC);
-        define(DELETE_JSON_PATH_CONFIG, Type.BOOLEAN, DELETE_JSON_PATH_DEFAULT, Importance.MEDIUM, DELETE_JSON_PATH_DOC);
+        define(JSON_SUBPATH_CONFIG, ConfigDef.Type.STRING, JSON_SUBPATH_DEFAULT, ConfigDef.Importance.MEDIUM, JSON_SUBPATH_DOC);
     }
 
     @Override
@@ -114,16 +112,13 @@ public class RedisSinkConfigDef extends RedisConfigDef {
         }
         RedisCommand command = redisCommand(props);
 
-        // Ensure JSON_PATH_CONFIG and FIXED_JSON_PATH_CONFIG are only set if the command is JSONMERGE
-        if (command != RedisCommand.JSONMERGE) {
+        // Ensure JSON_PATH_CONFIG and FIXED_JSON_PATH_CONFIG are only set if the command is JSONMERGE or JSONSET
+        if (command != RedisCommand.JSONMERGE && command != RedisCommand.JSONSET) {
             if (props.containsKey(JSON_PATH_CONFIG)) {
-                results.get(JSON_PATH_CONFIG).addErrorMessage("The JSON path configuration is not allowed unless the command is JSONMERGE.");
+                results.get(JSON_PATH_CONFIG).addErrorMessage("The JSON path configuration is not allowed unless the command is JSONMERGE or JSONSET.");
             }
             if (props.containsKey(FIXED_JSON_PATH_CONFIG)) {
-                results.get(FIXED_JSON_PATH_CONFIG).addErrorMessage("The fixed JSON path configuration is not allowed unless the command is JSONMERGE.");
-            }
-            if (props.containsKey(DELETE_JSON_PATH_CONFIG)) {
-                results.get(DELETE_JSON_PATH_CONFIG).addErrorMessage("The delete JSON path configuration is not allowed unless the command is JSONMERGE."); // Neue Validierung
+                results.get(FIXED_JSON_PATH_CONFIG).addErrorMessage("The fixed JSON path configuration is not allowed unless the command is JSONMERGE or JSONSET.");
             }
         }
 

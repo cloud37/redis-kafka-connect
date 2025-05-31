@@ -50,7 +50,7 @@ public class RedisSinkConfig extends RedisConfig {
 
     private final String fixedJsonPath;
 
-    private final boolean deleteJsonPath;
+    private final String jsonSubPath;
 
     public RedisSinkConfig(Map<?, ?> originals) {
         super(new RedisSinkConfigDef(), originals);
@@ -63,14 +63,14 @@ public class RedisSinkConfig extends RedisConfig {
         waitReplicas = getInt(RedisSinkConfigDef.WAIT_REPLICAS_CONFIG);
         waitTimeout = Duration.ofMillis(getLong(RedisSinkConfigDef.WAIT_TIMEOUT_CONFIG));
 
-        if (command == RedisCommand.JSONMERGE) {
+        if (command == RedisCommand.JSONMERGE || command == RedisCommand.JSONSET) {
             jsonPath = getString(RedisSinkConfigDef.JSON_PATH_CONFIG).trim();
             fixedJsonPath = getString(RedisSinkConfigDef.FIXED_JSON_PATH_CONFIG).trim();
-            deleteJsonPath = getBoolean(RedisSinkConfigDef.DELETE_JSON_PATH_CONFIG);
+            jsonSubPath = getString(RedisSinkConfigDef.JSON_SUBPATH_CONFIG).trim();
         } else {
             jsonPath = null;
             fixedJsonPath = null;
-            deleteJsonPath = false;
+            jsonSubPath = null;
         }
     }
 
@@ -102,19 +102,21 @@ public class RedisSinkConfig extends RedisConfig {
         return waitTimeout;
     }
 
-    public boolean getDeleteJsonPath() { return deleteJsonPath; }
-
     public String getFixedJsonPath() {
         return fixedJsonPath;
     }
 
     public String getJsonPath() { return jsonPath; }
 
+    public String getJsonSubPath() {
+        return jsonSubPath;
+    }
+
     @Override
     public int hashCode() {
         final int prime = 31;
         int result = super.hashCode();
-        result = prime * result + Objects.hash(charset, keyspace, separator, multiExec, command, waitReplicas, waitTimeout, deleteJsonPath, fixedJsonPath, jsonPath);
+        result = prime * result + Objects.hash(charset, keyspace, separator, multiExec, command, waitReplicas, waitTimeout, fixedJsonPath, jsonPath, jsonSubPath);
         return result;
     }
 
@@ -129,8 +131,10 @@ public class RedisSinkConfig extends RedisConfig {
         RedisSinkConfig other = (RedisSinkConfig) obj;
         return Objects.equals(charset, other.charset) && Objects.equals(keyspace, other.keyspace)
                 && Objects.equals(separator, other.separator) && multiExec == other.multiExec && command == other.command
-                && waitReplicas == other.waitReplicas && waitTimeout == other.waitTimeout && deleteJsonPath == other.deleteJsonPath &&
-                Objects.equals(fixedJsonPath, other.fixedJsonPath) && Objects.equals(jsonPath, other.jsonPath);
+                && waitReplicas == other.waitReplicas && waitTimeout == other.waitTimeout &&
+                Objects.equals(fixedJsonPath, other.fixedJsonPath)
+                && Objects.equals(jsonPath, other.jsonPath)
+                && Objects.equals(jsonSubPath, other.jsonSubPath);
     }
 
 }
