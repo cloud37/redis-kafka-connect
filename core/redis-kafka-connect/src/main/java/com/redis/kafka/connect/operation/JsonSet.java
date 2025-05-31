@@ -7,12 +7,14 @@ import com.redis.lettucemod.api.async.RedisJSONAsyncCommands;
 import com.redis.spring.batch.writer.operation.AbstractKeyWriteOperation;
 import io.lettuce.core.RedisFuture;
 import io.lettuce.core.api.async.BaseRedisAsyncCommands;
+import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.api.async.RedisKeyAsyncCommands;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.function.Function;
+import java.util.concurrent.CompletableFuture;
 
 public class JsonSet<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
     private static final Logger log = LoggerFactory.getLogger(JsonSet.class);
@@ -32,10 +34,6 @@ public class JsonSet<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
         this.mapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
     }
 
-    public void setPath(String path) {
-        this.pathFunction = t -> path;
-    }
-
     public void setPathFunction(Function<T, String> path) {
         this.pathFunction = path;
     }
@@ -48,35 +46,63 @@ public class JsonSet<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
         this.conditionFunction = function;
     }
 
+    @Override
+    @SuppressWarnings("unchecked")
     protected RedisFuture<String> execute(BaseRedisAsyncCommands<K, V> commands, T item, K key) {
-        String path = determinePath(item);
-        logPath(path);
-
-        if (conditionFunction.apply(item)) {
-            if (isPathSet()) {
-                return deleteJsonPath(commands, key, path);
-            } else {
-                return deleteKey(commands, key);
-            }
-        } else {
-            try {
-                V value = this.valueFunction.apply(item);
-
-                // Falls ein Fehler auftritt (z.B. das Dokument existiert nicht), setze ein leeres JSON und versuche es erneut
-                String emptyJson = mapper.writeValueAsString(new Object());
-                byte[] emptyJsonBytes = emptyJson.getBytes(StandardCharsets.UTF_8);
-                ((RedisJSONAsyncCommands<K, V>) commands).jsonSet(key, ROOT_PATH, (V) emptyJsonBytes);
-
-                // Erneuter Versuch, das JSON zu setzen
-                return ((RedisJSONAsyncCommands) commands).jsonSet(key, path, value);
-            } catch (JsonProcessingException e) {
-                log.error("Error processing JSON", e);
-                return null;
-            } catch (Exception e) {
-                log.error("Error executing Redis command", e);
-                return null;
-            }
+        if (!(commands instanceof RedisJSONAsyncCommands)) {
+            throw new IllegalArgumentException("Commands must be an instance of RedisJSONAsyncCommands");
         }
+        return execute((RedisJSONAsyncCommands<K, V>) commands, item, key);
+    }
+
+    protected RedisFuture<String> execute(RedisJSONAsyncCommands<K, V> commands, T item, K key) {
+        log.info("Executing JsonSet operation.");
+        log.debug("Key: {}", key);
+        log.debug("Item: {}", item);
+
+        try {
+            // Start transaction
+            RedisJSONAsyncCommands<K, V> asyncCommands = (RedisJSONAsyncCommands<K, V>) commands;
+            ((RedisAsyncCommands<K, V>) asyncCommands).multi();
+
+            String path = pathFunction.apply(item);
+            V value = valueFunction.apply(item);
+
+            if (value == null) {
+                log.error("Value is null. Skipping operation.");
+                ((RedisAsyncCommands<K, V>) asyncCommands).discard();
+                return null;
+            }
+
+            if (conditionFunction != null && conditionFunction.apply(item)) {
+                log.debug("Condition met, proceeding with deletion.");
+                commands.jsonDel(key, path);
+            } else {
+                log.debug("Setting JSON value at path: {}", path);
+                commands.jsonSet(key, path, value);
+            }
+
+            // Execute transaction and return the result
+            return (RedisFuture<String>) ((RedisAsyncCommands<K, V>) asyncCommands).exec().thenApply(results -> {
+                if (results == null || results.isEmpty()) {
+                    return "OK";
+                }
+                Object result = results.get(0);
+                if (result instanceof String) {
+                    return (String) result;
+                }
+                return "OK";
+            });
+
+        } catch (Exception e) {
+            log.error("Error during JsonSet operation: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+
+    // Diese Methode ist nur für Tests gedacht
+    public RedisFuture<String> executeForTest(RedisJSONAsyncCommands<K, V> commands, T item, K key) {
+        return execute(commands, item, key);
     }
 
     private String determinePath(T item) {
@@ -97,11 +123,23 @@ public class JsonSet<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
         return this.pathFunction != DEFAULT_PATH_FUNCTION;
     }
 
-    private RedisFuture<String> deleteKey(BaseRedisAsyncCommands<K, V> commands, K key) {
-        return ((RedisKeyAsyncCommands) commands).del(key);
+    private CompletableFuture<String> deleteKey(RedisJSONAsyncCommands<K, V> commands, K key) {
+        RedisFuture<Long> future = ((RedisKeyAsyncCommands<K, V>) commands).del(key);
+        CompletableFuture<String> mapped = new CompletableFuture<>();
+        future.whenComplete((res, ex) -> {
+            if (ex != null) mapped.completeExceptionally(ex);
+            else mapped.complete("OK");
+        });
+        return mapped;
     }
 
-    private RedisFuture<String> deleteJsonPath(BaseRedisAsyncCommands<K, V> commands, K key, String path) {
-        return ((RedisJSONAsyncCommands) commands).jsonDel(key, path);
+    private CompletableFuture<String> deleteJsonPath(RedisJSONAsyncCommands<K, V> commands, K key, String path) {
+        RedisFuture<Long> future = commands.jsonDel(key, path);
+        CompletableFuture<String> mapped = new CompletableFuture<>();
+        future.whenComplete((res, ex) -> {
+            if (ex != null) mapped.completeExceptionally(ex);
+            else mapped.complete("OK");
+        });
+        return mapped;
     }
 }
