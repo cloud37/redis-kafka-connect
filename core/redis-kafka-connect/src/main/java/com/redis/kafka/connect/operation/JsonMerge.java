@@ -1,39 +1,42 @@
-/*
- * Decompiled with CFR 0.153-SNAPSHOT (d6f6758-dirty).
- */
 package com.redis.kafka.connect.operation;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.redis.kafka.connect.adapter.RedisFutureAdapter;
-import com.redis.kafka.connect.shaded.com.fasterxml.jackson.core.JsonProcessingException;
-import com.redis.kafka.connect.shaded.com.fasterxml.jackson.databind.ObjectMapper;
-import com.redis.kafka.connect.shaded.com.fasterxml.jackson.databind.SerializationFeature;
-import com.redis.kafka.connect.shaded.com.redis.lettucemod.api.async.RedisJSONAsyncCommands;
-import com.redis.kafka.connect.shaded.com.redis.spring.batch.writer.operation.AbstractKeyWriteOperation;
-import com.redis.kafka.connect.shaded.io.lettuce.core.RedisFuture;
-import com.redis.kafka.connect.shaded.io.lettuce.core.api.async.BaseRedisAsyncCommands;
-import com.redis.kafka.connect.shaded.io.lettuce.core.api.async.RedisKeyAsyncCommands;
-import com.redis.kafka.connect.shaded.org.slf4j.Logger;
-import com.redis.kafka.connect.shaded.org.slf4j.LoggerFactory;
+import com.redis.lettucemod.api.async.RedisJSONAsyncCommands;
+import com.redis.spring.batch.writer.operation.AbstractKeyWriteOperation;
+import io.lettuce.core.RedisFuture;
+import io.lettuce.core.api.async.BaseRedisAsyncCommands;
+import io.lettuce.core.api.async.RedisKeyAsyncCommands;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-public class JsonMerge<K, V, T>
-extends AbstractKeyWriteOperation<K, V, T> {
+public class JsonMerge<K, V, T> extends AbstractKeyWriteOperation<K, V, T> {
     private static final Logger log = LoggerFactory.getLogger(JsonMerge.class);
+
     public static final String ROOT_PATH = "$";
-    private static final Function<Object, String> DEFAULT_PATH_FUNCTION = t -> "$";
-    private Function<T, String> pathFunction = DEFAULT_PATH_FUNCTION;
-    private Function<T, String> subPathFunction = t -> "";
+    private static final Function<Object, String> DEFAULT_PATH_FUNCTION = t -> ROOT_PATH;
+
+    private Function<T, String> pathFunction;
+    private Function<T, String> subPathFunction;
     private Function<T, V> valueFunction;
     private Function<T, Boolean> conditionFunction;
-    private final ObjectMapper mapper = new ObjectMapper();
+
+    private final ObjectMapper mapper;
 
     public JsonMerge() {
+        // Set default path and subpath functions (standardmäßig auf ROOT_PATH)
+        this.pathFunction = (Function<T, String>) DEFAULT_PATH_FUNCTION;
+        this.subPathFunction = (Function<T, String>) (t -> ""); // Default: leer
+        this.mapper = new ObjectMapper();
         this.mapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
     }
 
@@ -45,6 +48,10 @@ extends AbstractKeyWriteOperation<K, V, T> {
         this.pathFunction = pathFunction;
     }
 
+    /**
+     * Setzt die Funktion zur Bestimmung des Sub-Pfads.
+     * Beim Delete wird dieser Sub-Pfad an den Hauptpfad angehängt.
+     */
     public void setSubPathFunction(Function<T, String> subPathFunction) {
         this.subPathFunction = subPathFunction;
     }
@@ -57,16 +64,23 @@ extends AbstractKeyWriteOperation<K, V, T> {
         this.conditionFunction = conditionFunction;
     }
 
+    /**
+     * Für Merge-Operationen wird nur der Hauptpfad verwendet.
+     */
     private String determineMergePath(T item) {
         String mainPath = this.pathFunction.apply(item);
-        log.debug("Determined merge path: {}", (Object)mainPath);
+        log.debug("Determined merge path: {}", mainPath);
         return mainPath;
     }
 
+    /**
+     * Für Delete-Operationen wird der Sub-Pfad (falls definiert) an den Hauptpfad angehängt.
+     */
     private String determineDeletePath(T item) {
         String mainPath = this.pathFunction.apply(item);
         String subPath = this.subPathFunction.apply(item);
         if (subPath != null && !subPath.trim().isEmpty()) {
+            // Falls subPath nicht mit einem Punkt beginnt, diesen ergänzen.
             if (!subPath.trim().startsWith(".")) {
                 subPath = "." + subPath.trim();
             }
@@ -74,34 +88,43 @@ extends AbstractKeyWriteOperation<K, V, T> {
             log.debug("Determined delete path: mainPath={} subPath={} -> fullPath={}", mainPath, subPath, fullPath);
             return fullPath;
         }
-        log.debug("No subpath configured; delete path equals merge path: {}", (Object)mainPath);
+        log.debug("No subpath configured; delete path equals merge path: {}", mainPath);
         return mainPath;
     }
 
     @Override
     protected RedisFuture<String> execute(BaseRedisAsyncCommands<K, V> commands, T item, K key) {
         try {
-            String mergePath = this.determineMergePath(item);
-            this.logPath(mergePath);
+            // Für Merge-Operationen verwenden wir den Merge-Pfad
+            String mergePath = determineMergePath(item);
+            logPath(mergePath);
             V value = this.valueFunction.apply(item);
-            log.info("Value: {}", (Object)value);
-            if (this.conditionFunction.apply(item).booleanValue()) {
-                if (this.isPathSet()) {
-                    String deletePath = this.determineDeletePath(item);
+            log.info("Value: {}", value);
+
+            if (conditionFunction.apply(item)) {
+                // Für Löschoperationen wird der Delete-Pfad (Hauptpfad + Subpfad) verwendet
+                if (isPathSet()) {
+                    String deletePath = determineDeletePath(item);
                     if (deletePath.contains(",")) {
-                        return this.deleteMultipleJsonPathsParallel(commands, key, deletePath);
+                        return deleteMultipleJsonPathsParallel(commands, key, deletePath);
+                    } else {
+                        log.debug("Deleting single JSON path: {}", deletePath);
+                        return deleteJsonPath(commands, key, deletePath);
                     }
-                    log.debug("Deleting single JSON path: {}", (Object)deletePath);
-                    return this.deleteJsonPath(commands, key, deletePath);
+                } else {
+                    log.debug("Condition met and no specific path set, deleting entire key.");
+                    return deleteKey(commands, key);
                 }
-                log.debug("Condition met and no specific path set, deleting entire key.");
-                return this.deleteKey(commands, key);
             }
-            log.info("isPathSet: {}  mergePath: {}", (Object)this.isPathSet(), (Object)mergePath);
-            if (this.isPathSet()) {
-                return this.performJsonMerge(commands, key, mergePath, value);
+
+            log.info("isPathSet: {}  mergePath: {}", isPathSet(), mergePath);
+
+            // Bei Merge-Operationen verwenden wir den Merge-Pfad (ohne Subpfad)
+            if (isPathSet()) {
+                return performJsonMerge(commands, key, mergePath, value);
+            } else {
+                return performJsonSet(commands, key, value);
             }
-            return this.performJsonSet(commands, key, value);
         } catch (JsonProcessingException e) {
             log.error("Error processing JSON", e);
             return null;
@@ -112,65 +135,78 @@ extends AbstractKeyWriteOperation<K, V, T> {
     }
 
     private RedisFuture<String> deleteKey(BaseRedisAsyncCommands<K, V> commands, K key) {
-        log.debug("Deleting key: {}", (Object)key);
-        return ((RedisKeyAsyncCommands)((Object)commands)).del(key);
+        log.debug("Deleting key: {}", key);
+        return ((RedisKeyAsyncCommands) commands).del(key);
     }
 
     private RedisFuture<String> deleteJsonPath(BaseRedisAsyncCommands<K, V> commands, K key, String path) {
-        log.debug("Deleting JSON path: {}", (Object)path);
-        return ((RedisJSONAsyncCommands)((Object)commands)).jsonDel(key, path);
+        log.debug("Deleting JSON path: {}", path);
+        return ((RedisJSONAsyncCommands) commands).jsonDel(key, path);
     }
 
+    /**
+     * Löscht mehrere durch Komma getrennte JSON-Pfade parallel.
+     * Falls kein Pfad definiert ist, wird der gesamte Schlüssel gelöscht.
+     */
     private RedisFuture<String> deleteMultipleJsonPathsParallel(BaseRedisAsyncCommands<K, V> commands, K key, String pathsStr) {
-        List pathsToDelete = Arrays.stream(pathsStr.split(",")).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toList());
-        log.debug("Parsed paths to delete: {}", (Object)pathsToDelete);
+        List<String> pathsToDelete = Arrays.stream(pathsStr.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+        log.debug("Parsed paths to delete: {}", pathsToDelete);
         if (pathsToDelete.isEmpty()) {
-            log.debug("No paths found; deleting entire key: {}", (Object)key);
-            return this.deleteKey(commands, key);
+            log.debug("No paths found; deleting entire key: {}", key);
+            return deleteKey(commands, key);
         }
-        List<CompletableFuture> futures = pathsToDelete.stream().map(path -> {
-            log.debug("Starting deletion for JSON path: {}", path);
-            return this.deleteJsonPath(commands, key, (String)path).toCompletableFuture().whenComplete((result, ex) -> {
-                if (ex != null) {
-                    log.error("Error deleting JSON path '{}': {}", path, (Object)ex.getMessage());
-                } else {
-                    log.debug("Successfully deleted JSON path '{}': result={}", path, result);
-                }
-            });
-        }).collect(Collectors.toList());
+
+        List<CompletableFuture<String>> futures = pathsToDelete.stream()
+                .map(path -> {
+                    log.debug("Starting deletion for JSON path: {}", path);
+                    return deleteJsonPath(commands, key, path)
+                            .toCompletableFuture()
+                            .whenComplete((result, ex) -> {
+                                if (ex != null) {
+                                    log.error("Error deleting JSON path '{}': {}", path, ex.getMessage());
+                                } else {
+                                    log.debug("Successfully deleted JSON path '{}': result={}", path, result);
+                                }
+                            });
+                })
+                .collect(Collectors.toList());
+
         CompletableFuture<Void> allFutures = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
-        CompletionStage result = allFutures.thenApply(v -> {
+        CompletableFuture<String> result = allFutures.thenApply(v -> {
             log.debug("All JSON path deletions completed for key: {}", key);
             return "OK";
         });
-        return new RedisFutureAdapter<String>((CompletableFuture<String>)result);
+        return new RedisFutureAdapter<>(result);
     }
 
     private void logPath(String path) {
-        if (this.isPathSet()) {
-            log.info("Path is set to: {}", (Object)path);
+        if (isPathSet()) {
+            log.info("Path is set to: {}", path);
         } else {
-            log.info("Path is not set, using default: {}", (Object)ROOT_PATH);
+            log.info("Path is not set, using default: {}", ROOT_PATH);
         }
     }
 
+    @SuppressWarnings("unchecked")
     private RedisFuture<String> performJsonMerge(BaseRedisAsyncCommands<K, V> commands, K key, String path, V value) throws JsonProcessingException {
-        String emptyJson = this.mapper.writeValueAsString(new Object());
+        String emptyJson = mapper.writeValueAsString(new Object());
         byte[] emptyJsonBytes = emptyJson.getBytes(StandardCharsets.UTF_8);
         log.info("Performing JSON merge - key: {}  path: {}  value: {}", key, path, value);
-        ((RedisJSONAsyncCommands)((Object)commands)).jsonMerge(key, ROOT_PATH, emptyJsonBytes);
-        return ((RedisJSONAsyncCommands)((Object)commands)).jsonMerge(key, path, value);
+        ((RedisJSONAsyncCommands<K, V>) commands).jsonMerge(key, ROOT_PATH, (V) emptyJsonBytes);
+        return ((RedisJSONAsyncCommands<K, V>) commands).jsonMerge(key, path, value);
     }
 
     private RedisFuture<String> performJsonSet(BaseRedisAsyncCommands<K, V> commands, K key, V value) throws JsonProcessingException {
-        log.info("Performing JSON set - key: {}  value: {}", (Object)key, (Object)value);
-        return ((RedisJSONAsyncCommands)((Object)commands)).jsonSet(key, ROOT_PATH, value);
+        log.info("Performing JSON set - key: {}  value: {}", key, value);
+        return ((RedisJSONAsyncCommands<K, V>) commands).jsonSet(key, ROOT_PATH, value);
     }
 
     private boolean isPathSet() {
         boolean pathSet = this.pathFunction != DEFAULT_PATH_FUNCTION;
-        log.debug("isPathSet: {}", (Object)pathSet);
+        log.debug("isPathSet: {}", pathSet);
         return pathSet;
     }
 }
-

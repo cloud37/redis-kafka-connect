@@ -58,17 +58,14 @@ import com.redis.spring.batch.writer.OperationItemWriter;
 import com.redis.spring.batch.writer.WriteOperation;
 import com.redis.spring.batch.writer.operation.Del;
 import com.redis.spring.batch.writer.operation.Hset;
-//import com.redis.spring.batch.writer.operation.JsonSet;
-import com.redis.kafka.connect.operation.JsonSet;
+import com.redis.spring.batch.writer.operation.JsonSet;
 import com.redis.kafka.connect.operation.JsonMerge;
 import com.redis.spring.batch.writer.operation.Lpush;
 import com.redis.spring.batch.writer.operation.Rpush;
-//import com.redis.spring.batch.writer.operation.Sadd;
 import com.redis.kafka.connect.operation.Sadd;
 import com.redis.spring.batch.writer.operation.Set;
 import com.redis.spring.batch.writer.operation.TsAdd;
 import com.redis.spring.batch.writer.operation.Xadd;
-//import com.redis.spring.batch.writer.operation.Zadd;
 import com.redis.kafka.connect.operation.Zadd;
 
 import io.lettuce.core.AbstractRedisClient;
@@ -170,10 +167,8 @@ public class RedisSinkTask extends SinkTask {
                 return hset;
             case JSONSET:
                 JsonSet<byte[], byte[], SinkRecord> jsonSet = new JsonSet<>();
-                jsonSet.setKeyFunction(this::jsonPathKey);
+                jsonSet.setKeyFunction(this::key);
                 jsonSet.setValueFunction(this::jsonValue);
-                jsonSet.setConditionFunction(this::isNullValue);
-                jsonSet.setPathFunction(this::determineJsonPath);
                 return jsonSet;
             case JSONMERGE:
                 JsonMerge<byte[], byte[], SinkRecord> jsonMerge = new JsonMerge<>();
